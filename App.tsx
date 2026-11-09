@@ -9,6 +9,7 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   Alert,
+  BackHandler,
   Platform,
   Pressable,
   SafeAreaView,
@@ -91,6 +92,7 @@ function ProgressBar({fraction,dark=false}: {fraction:number;dark?:boolean}) {re
 
 export default function App() {
   const [route,setRoute] = useState<Route>('welcome');
+  const [history,setHistory] = useState<Route[]>([]);
   const [started,setStarted] = useState(false);
   const [loaded,setLoaded] = useState(false);
   const [answers,setAnswers] = useState<Answers>({});
@@ -119,23 +121,55 @@ export default function App() {
   },[answers]);
   const recommend = QUESTS.find(q=>q.id===matchingQuest)||QUESTS[0];
 
-  const openQuest=useCallback((id:QuestId)=>{setSelectedQuest(id);setRoute('details');},[]);
-  const joinQuest=()=>{setProgress(prev=>({...prev,[selectedQuest]:Math.max(0,prev[selectedQuest]||0)}));setRoute('progress');};
+  // Stack-based back navigation for the eight-screen Expo prototype.
+  const navigate=useCallback((next:Route)=>{
+    if(next===route)return;
+    setHistory(prev=>[...prev.slice(-19),route]);
+    setRoute(next);
+  },[route]);
+
+  const goBack=useCallback(()=>{
+    // The assessment's previous question takes priority over leaving the screen.
+    if(route==='assessment' && question>0){
+      setQuestion(q=>Math.max(0,q-1));
+      return true;
+    }
+    if(history.length>0){
+      const previous=history[history.length-1];
+      setHistory(prev=>prev.slice(0,-1));
+      setRoute(previous);
+      return true;
+    }
+    // Restored sessions can have an empty in-memory history.
+    if(started && route!=='home'){
+      setRoute('home');
+      return true;
+    }
+    return false;
+  },[route,question,history,started]);
+
+  useEffect(()=>{
+    const subscription=BackHandler.addEventListener('hardwareBackPress',goBack);
+    return ()=>subscription.remove();
+  },[goBack]);
+
+  const openQuest=useCallback((id:QuestId)=>{setSelectedQuest(id);navigate('details');},[navigate]);
+  const joinQuest=()=>{setProgress(prev=>({...prev,[selectedQuest]:Math.max(0,prev[selectedQuest]||0)}));navigate('progress');};
   const logAction=()=>setProgress(prev=>({...prev,[selectedQuest]:Math.min(chosen.goal,(prev[selectedQuest]||0)+1)}));
   const reset=()=>Alert.alert('Reset GreenQuest demo?','This clears locally stored answers and challenge progress.',[
-    {text:'Cancel',style:'cancel'}, {text:'Reset',style:'destructive',onPress:()=>{setProgress({});setAnswers({});setQuestion(0);setStarted(false);setRoute('welcome');}}
+    {text:'Cancel',style:'cancel'}, {text:'Reset',style:'destructive',onPress:()=>{setProgress({});setAnswers({});setQuestion(0);setStarted(false);setHistory([]);setRoute('welcome');}}
   ]);
-  const onBegin=()=>{setStarted(true);setRoute('home')};
+  const onBegin=()=>{setStarted(true);setHistory([]);setRoute('home')};
   const onAssessmentNext=()=>{
     if(!answers[QUESTIONS[question].id])return;
-    if(question<QUESTIONS.length-1)setQuestion(q=>q+1); else setRoute('carbon');
+    if(question<QUESTIONS.length-1)setQuestion(q=>q+1); else navigate('carbon');
   };
   const dark=['welcome','recommendations','progress'].includes(route);
   const showTabs=['home','carbon','recommendations','challenges','progress'].includes(route);
   const navigateTab=(tab:'home'|'challenges'|'progress'|'carbon')=>{
-    if(tab==='progress'&&!QUESTS.some(q=>progress[q.id]!==undefined)) {setRoute('challenges');return;}
+    if(tab==='progress'&&!QUESTS.some(q=>progress[q.id]!==undefined)) {navigate('challenges');return;}
     if(tab==='progress') {const id=QUESTS.find(q=>progress[q.id]!==undefined)?.id||'commute';setSelectedQuest(id);}
-    setRoute(tab);
+    navigate(tab);
   };
   const viewStyle=[s.root,{backgroundColor:dark?C.navy:C.bg}];
   const list=QUESTS.filter(q=>(filter==='All quests'||q.category===filter) && (q.title+' '+q.subtitle).toLowerCase().includes(search.toLowerCase()));
@@ -145,6 +179,13 @@ export default function App() {
   return <SafeAreaView style={viewStyle}>
     <StatusBar backgroundColor={dark?C.navy:C.bg} barStyle={dark?'light-content':'dark-content'}/>
     <View style={s.flex}>
+      {route!=='welcome'&&route!=='home'&&
+        <View style={[s.backHeader,{borderBottomColor:dark?'#383B66':C.border}]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back to previous screen" onPress={goBack} style={s.backButton}>
+            <Ionicons name="arrow-back" color={dark?C.white:C.ink} size={21}/>
+            <Text style={[s.backButtonText,{color:dark?C.white:C.ink}]}>Back</Text>
+          </Pressable>
+        </View>}
       {route==='welcome' && <ScrollView contentContainerStyle={[s.page,{minHeight:710,justifyContent:'space-between',backgroundColor:C.navy}]}>
         <View>
           <Text style={s.welcomeBrand}>G R E E N Q U E S T</Text>
@@ -163,7 +204,7 @@ export default function App() {
       {route==='home'&&<ScrollView contentContainerStyle={[s.page,{paddingBottom:25}]}>
         <View style={s.topRow}><View style={{flex:1}}><Caption>GOOD MORNING, EXPLORER</Caption><Title size={27}>Make today count.</Title></View>
         <View style={s.levelBadge}><Text style={s.levelSmall}>LEVEL {String(displayedLevel).padStart(2,'0')}</Text><Text style={s.levelBig}>{xp} XP</Text></View></View>
-        <Pressable onPress={()=>{setSelectedQuest(active[0]?.id||completed[0]?.id||'commute');setRoute('progress')}} style={[s.activeCard,{marginTop:18}]}>
+        <Pressable onPress={()=>{setSelectedQuest(active[0]?.id||completed[0]?.id||'commute');navigate('progress')}} style={[s.activeCard,{marginTop:18}]}>
           <Pill label="YOUR ACTIVE QUEST" color="#A995FF" textColor={C.navy}/>
           <View style={s.bubble}><Text style={{color:C.white,fontSize:38}}>✦</Text></View>
           <Text style={s.activeTitle}>{active[0]?.title||'The car-free\ncommute'}</Text>
@@ -177,12 +218,12 @@ export default function App() {
           <Momentum value={String(active.length).padStart(2,'0')} label="ACTIVE" color={C.pink}/>
           <Momentum value={String(xp)} label="XP EARNED" color="#E09A2A"/>
         </View>
-        <View style={[s.row,{justifyContent:'space-between',marginTop:29,marginBottom:13}]}><Title size={18}>Made for your lifestyle</Title><Pressable onPress={()=>setRoute('recommendations')}><Text style={{color:C.purple,fontSize:12,fontWeight:'800'}}>See all</Text></Pressable></View>
+        <View style={[s.row,{justifyContent:'space-between',marginTop:29,marginBottom:13}]}><Title size={18}>Made for your lifestyle</Title><Pressable onPress={()=>navigate('recommendations')}><Text style={{color:C.purple,fontSize:12,fontWeight:'800'}}>See all</Text></Pressable></View>
         <View style={[s.row,{gap:12}]}>
           <Pressable onPress={()=>openQuest('power')} style={[s.suggestCard,{flex:1}]}><Text style={s.suggestTag}>EASY</Text><Text style={[s.suggestStar,{color:C.pink}]}>✦</Text><Text style={s.suggestTitle}>Power-down{ '\n'}hour</Text><Body style={{fontSize:11}}>7-day challenge</Body></Pressable>
           <Pressable onPress={()=>openQuest('plate')} style={[s.suggestCard,{flex:1}]}><Text style={[s.suggestTag,{color:C.pink}]}>5 DAYS</Text><Text style={[s.suggestStar,{color:C.sky}]}>✧</Text><Text style={s.suggestTitle}>Plant-based{ '\n'}plate</Text><Body style={{fontSize:11}}>2 meals / week</Body></Pressable>
         </View>
-        <Pressable onPress={()=>{setQuestion(0);setRoute('assessment')}} style={s.assessLink}><Ionicons name="sparkles-outline" color={C.purple} size={16}/><Text style={s.assessText}>Personalize my quest recommendations →</Text></Pressable>
+        <Pressable onPress={()=>{setQuestion(0);navigate('assessment')}} style={s.assessLink}><Ionicons name="sparkles-outline" color={C.purple} size={16}/><Text style={s.assessText}>Personalize my quest recommendations →</Text></Pressable>
         <Pressable onPress={reset}><Text style={s.resetText}>Reset demo data</Text></Pressable>
       </ScrollView>}
 
@@ -213,7 +254,7 @@ export default function App() {
         <Text style={[s.sectionLabel,{marginTop:24,marginBottom:12}]}>ESTIMATED BREAKDOWN</Text>
         <Breakdown name="Transport" value="100 kg" color={C.purple}/><Breakdown name="Food" value="80 kg" color={C.pink}/><Breakdown name="Home energy" value="60 kg" color={C.yellow}/>
         <Body style={{fontSize:11,marginBottom:16,marginTop:11}}>Demonstration values only. Validated emission factors and real calculations will be added in a later sprint.</Body>
-        <BigButton label="Discover matching quests" onPress={()=>setRoute('recommendations')}/>
+        <BigButton label="Discover matching quests" onPress={()=>navigate('recommendations')}/>
       </ScrollView>}
 
       {route==='recommendations'&&<ScrollView contentContainerStyle={[s.page,{paddingBottom:25,backgroundColor:C.navy}]}>
@@ -230,7 +271,7 @@ export default function App() {
           <View style={{flex:1,marginLeft:11}}><Text style={{color:C.white,fontWeight:'800',fontSize:15}}>{q.title}</Text><Body light style={{fontSize:11,marginTop:4}}>{q.subtitle}</Body></View><Pill label="VIEW" color="#51467E" textColor={C.white}/>
         </Pressable>)}
         <View style={{marginTop:20}}><BigButton label="View top challenge" pink onPress={()=>openQuest(recommend.id)}/></View>
-        <Pressable onPress={()=>setRoute('challenges')}><Text style={{color:'#BAB4DB',textAlign:'center',marginTop:16}}>Explore all challenges →</Text></Pressable>
+        <Pressable onPress={()=>navigate('challenges')}><Text style={{color:'#BAB4DB',textAlign:'center',marginTop:16}}>Explore all challenges →</Text></Pressable>
       </ScrollView>}
 
       {route==='challenges'&&<ScrollView contentContainerStyle={[s.page,{paddingBottom:35}]} keyboardShouldPersistTaps="handled">
@@ -264,7 +305,7 @@ export default function App() {
           {chosen.steps.map((step,i)=><View key={step} style={[s.row,{gap:13,alignItems:'center',marginBottom:15}]}><View style={s.stepCircle}><Text style={{fontSize:11,fontWeight:'800',color:C.purple}}>{String(i+1).padStart(2,'0')}</Text></View><Text style={{flex:1,fontSize:14,fontWeight:'600',color:C.ink}}>{step}</Text></View>)}
           <View style={s.detailInfo}><Text style={{fontSize:12,color:C.violet,fontWeight:'800'}}>✦  Impact estimate shown after completion</Text></View>
           <BigButton label={(progress[chosen.id]||0)>0?'Continue this quest':'Join this quest'} dark onPress={joinQuest}/>
-          <Pressable onPress={()=>setRoute('challenges')}><Text style={s.backText}>← Back to all challenges</Text></Pressable>
+          <Pressable onPress={goBack}><Text style={s.backText}>← Back to previous screen</Text></Pressable>
         </View>
       </ScrollView>}
 
@@ -284,8 +325,8 @@ export default function App() {
           <Text style={{color:'#B8B4D5',fontSize:10}}>Illustrative: 3 × 4 km × 0.15 kg/km. Not a measured result.</Text>
         </View>
         <View style={[s.xpReward,{marginTop:14}]}><Ionicons name="star" color="#EC9E2D" size={39}/><View style={{marginLeft:13}}><Text style={{fontSize:23,fontWeight:'900',color:C.navy}}>{(progress[chosen.id]||0)>=chosen.goal?`+${chosen.xp} XP`:'XP reward locked'}</Text><Text style={{fontSize:12,color:'#716684',fontWeight:'600'}}>{(progress[chosen.id]||0)>=chosen.goal?'Reward earned · great work!':`${chosen.goal-(progress[chosen.id]||0)} more actions to earn ${chosen.xp} XP`}</Text></View></View>
-        <View style={{marginTop:18}}>{(progress[chosen.id]||0)<chosen.goal?<BigButton label="Log one completed action" pink onPress={logAction}/>:<BigButton label="Find my next quest" pink onPress={()=>setRoute('challenges')}/>}</View>
-        <Pressable onPress={()=>setRoute('home')}><Text style={{textAlign:'center',color:'#C2C2DC',marginTop:17,fontSize:12}}>Back to dashboard</Text></Pressable>
+        <View style={{marginTop:18}}>{(progress[chosen.id]||0)<chosen.goal?<BigButton label="Log one completed action" pink onPress={logAction}/>:<BigButton label="Find my next quest" pink onPress={()=>navigate('challenges')}/>}</View>
+        <Pressable onPress={()=>navigate('home')}><Text style={{textAlign:'center',color:'#C2C2DC',marginTop:17,fontSize:12}}>Back to dashboard</Text></Pressable>
       </ScrollView>}
     </View>
     {showTabs&&<View style={[s.bottomNav,{backgroundColor:dark?C.navy:C.bg,borderTopColor:dark?'#383B66':C.border}]}>
@@ -307,6 +348,9 @@ function NavItem({icon,label,active,dark,onPress}:{icon:keyof typeof Ionicons.gl
 
 const s=StyleSheet.create({
   root:{flex:1}, flex:{flex:1}, loading:{alignItems:'center',justifyContent:'center'},
+  backHeader:{height:48,paddingHorizontal:16,justifyContent:'center',borderBottomWidth:StyleSheet.hairlineWidth},
+  backButton:{flexDirection:'row',gap:8,alignItems:'center',alignSelf:'flex-start',minHeight:42,paddingHorizontal:8},
+  backButtonText:{fontSize:14,fontWeight:'800'},
   page:{paddingHorizontal:24,paddingTop:Platform.OS==='android'?12:14,paddingBottom:15},
   row:{flexDirection:'row'},
   caption:{fontSize:11,fontWeight:'800',letterSpacing:0.45,color:C.purple},
