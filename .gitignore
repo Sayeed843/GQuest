@@ -1,0 +1,27 @@
+# Dependencies and generated data
+node_modules/
+.expo/
+.expo-shared/
+dist/
+build/
+web-build/
+
+# Generated native projects (Expo managed workflow)
+android/
+ios/
+
+# Secrets and environment variables
+.env
+.env.*
+!.env.example
+*.keystore
+*.p12
+*.mobileprovision
+*.jks
+
+# Machine-specific files
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-error.log*
